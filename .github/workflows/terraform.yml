@@ -1,0 +1,84 @@
+# This is a basic workflow to help you get started with Actions
+
+name: AWS Deployment to S3
+
+# Controls when the workflow will run
+on:
+  push:
+    branches:
+      - main
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to '
+        required: true
+        default: 'dev' 
+        type: choice
+        options:
+          - dev
+          - sit
+          - uat
+          - prod
+
+env:
+  OCTOPUSSERVER_SPACE: MY SPACE # replace with your space
+  PROJECT_NAME: ${{ github.event.repository.name }}
+
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set Version
+        run: echo "PACKAGE_VERSION=$(date +'%Y.%m.%d').$GITHUB_RUN_NUMBER" >> $GITHUB_ENV
+
+      - name: Create artifacts folder
+        run: |
+          mkdir "$GITHUB_WORKSPACE/artifacts"
+
+      - name: Install Octopus CLI
+        uses: OctopusDeploy/install-octopus-cli-action@v1.1.8
+        with:
+          version: latest
+
+      - name: Package Code
+        run: |
+          octo pack --id="${{ env.PROJECT_NAME }}"  --format="Zip" --version="$PACKAGE_VERSION" --basePath="$GITHUB_WORKSPACE" --outFolder="$GITHUB_WORKSPACE/artifacts"
+
+      - name: Push Code to Octopuss
+        uses: OctopusDeploy/push-package-action@v1.1.1
+        with:
+          api_key: ${{ secrets.OCTOPUSSERVERAPIKEY }}
+          server: ${{ secrets.OCTOPUSSERVERURL }}
+          packages: "artifacts/${{ env.PROJECT_NAME }}.${{ env.PACKAGE_VERSION }}.zip"
+          space: ${{ env.OCTOPUSSERVER_SPACE }}
+          use_delta_compression: false
+          overwrite_mode: OverwriteExisting
+
+      - name: Generate Octopus Deploy build information
+        uses: OctopusDeploy/push-build-information-action@v1
+        env:
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUSSERVERAPIKEY }}
+          OCTOPUS_HOST: ${{ secrets.OCTOPUSSERVERURL }}
+          OCTOPUS_SPACE: ${{ env.OCTOPUSSERVER_SPACE }}
+        with:
+          version: ${{ env.PACKAGE_VERSION }}
+          packages: ${{ env.PROJECT_NAME }}
+          overwrite_mode: OverwriteExisting
+
+      - name: Create and deploy release
+        uses: OctopusDeploy/create-release-action@v1.1.1
+        with:
+          api_key: ${{ secrets.OCTOPUSSERVERAPIKEY }}
+          server: ${{ secrets.OCTOPUSSERVERURL }}
+          space: ${{ env.OCTOPUSSERVER_SPACE }}
+          project: ${{ env.PROJECT_NAME }}
+          progress: false
